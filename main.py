@@ -460,7 +460,7 @@ def open_material(rid, rel):
     if not r:
         return {"ok": False, "msg": "记录不存在"}
     root = material_dir(r["folder"]).resolve()
-    rel = safe_subfolder(rel)
+    rel = safe_subfolder(urllib.parse.unquote(rel))
     if rel is None:
         return {"ok": False, "msg": "非法路径"}
     p = (root / rel).resolve()
