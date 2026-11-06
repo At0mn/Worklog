@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工作记录</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <span class="logo">🗒 工作记录 <span class="byline">by At0m</span></span>
+  <span class="view-btns">
+    <button id="btnViewCalendar" class="primary">📅 日历</button>
+    <button id="btnViewList">☰ 列表</button>
+  </span>
+  <span id="dataDir" class="datadir"></span>
+</header>
+<div id="remindBar" class="remind hidden"></div>
+<div class="main">
+  <aside>
+    <div class="filters">
+      <input id="kw" type="search" placeholder="搜索标题 / 内容 / 标签 / 资料文件名…">
+      <div class="filter-row">
+        <select id="fCategory"><option value="">全部类别</option></select>
+        <input id="fStart" type="date" title="开始日期">
+        <input id="fEnd" type="date" title="结束日期">
+      </div>
+      <label class="f-done"><input id="fDone" type="checkbox"> 只看未完成</label>
+    </div>
+    <div id="filterBar" class="filter-bar hidden">
+      <span id="filterBarText"></span>
+      <button id="btnResetFilter" class="mini">✕ 返回全部</button>
+    </div>
+    <div id="recordList" class="list"></div>
+    <div class="side-btns">
+      <button id="btnNew" class="primary">＋ 新建记录</button>
+      <button id="btnExport">⇩ 导出总结</button>
+    </div>
+  </aside>
+  <section id="calendarView">
+    <div class="cal-head">
+      <button id="calPrev" class="mini">‹ 上月</button>
+      <strong id="calTitle"></strong>
+      <button id="calNext" class="mini">下月 ›</button>
+      <span class="spacer"></span>
+      <button id="calToday" class="mini">回到今天</button>
+    </div>
+    <div class="cal-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div id="calGrid" class="cal-grid"></div>
+    <p class="muted small cal-tip">蓝底 = 当天做的工作（✓=已完成），黄底 = 当天截止，红底 = 已超期未完成。点工作条目直接打开；点空白格看当天列表。</p>
+  </section>
+  <section id="listView">
+    <div id="editor" class="hidden">
+      <div class="editor-head">
+        <input id="title" class="title-input" placeholder="标题（如：10月第3周告警周报编写）">
+        <div class="meta-row">
+          <label>日期 <input id="date" type="date"></label>
+          <label class="done-label"><input id="done" type="checkbox"> 已完成</label>
+          <label>截止 <input id="deadline" type="date" title="截止时间（可选），到期会提醒"></label>
+          <label>类别
+            <select id="category"></select>
+            <button id="btnCat" class="mini" title="管理类别">⚙</button>
+          </label>
+          <label class="tags-label">标签 <input id="tags" placeholder="逗号分隔，如：周报,主站"></label>
+        </div>
+      </div>
+      <textarea id="content" placeholder="工作内容…"></textarea>
+      <div class="editor-actions">
+        <button id="btnSave" class="primary">保存 (Ctrl+S)</button>
+        <button id="btnDelete" class="danger">删除</button>
+        <span class="spacer"></span>
+        <span id="savedAt" class="muted"></span>
+      </div>
+      <div class="files" id="filesBox">
+        <div class="files-head">
+          <strong>📁 资料收集</strong>
+          <span class="muted small">可直接拖拽文件到此处</span>
+          <span class="spacer"></span>
+          <button id="btnUpload">上传文件</button>
+          <button id="btnOpenFolder">打开资料文件夹</button>
+          <input id="fileInput" type="file" multiple hidden>
+        </div>
+        <ul id="fileList"></ul>
+      </div>
+    </div>
+    <div id="empty" class="empty">
+      <p>👈 点击左侧选择一条记录，或点击「＋ 新建记录」开始</p>
+      <p class="muted small">每条记录可设「截止」日期，到期会在日历和顶部提醒条标出</p>
+    </div>
+  </section>
+</div>
+<div id="catModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong>管理类别</strong>
+      <button id="btnCatClose" class="mini">✕</button>
+    </div>
+    <div id="catList" class="cat-list"></div>
+    <div class="cat-add">
+      <input id="newCat" placeholder="输入新类别名称，回车添加">
+      <button id="btnCatAdd" class="primary">添加</button>
+    </div>
+    <p class="muted small" style="margin-top:8px">删除类别不影响已有记录，只是不再出现在下拉里</p>
+  </div>
+</div>
+<div id="exportModal" class="modal hidden">
+  <div class="modal-box" style="width:400px">
+    <div class="modal-head">
+      <strong>导出工作记录</strong>
+      <button id="btnExpClose" class="mini">✕</button>
+    </div>
+    <div class="exp-row"><span id="expWeekLabel"></span><span class="spacer"></span><button id="btnExpWeek">导出</button></div>
+    <div class="exp-row"><span id="expRangeLabel"></span><span class="spacer"></span><button id="btnExpRange">导出</button></div>
+    <div class="exp-row">
+      <span>全年汇总 <select id="expYearSel" style="width:96px"></select> <span id="expYearCount" class="muted"></span></span>
+      <span class="spacer"></span>
+      <button id="btnExpYear">导出</button>
+    </div>
+    <label class="exp-dedup"><input type="checkbox" id="expDedup"> 同一任务只记一行（按标题去重）</label>
+    <p class="muted small" style="margin-top:8px">每行 = 日期 ＋ 标题 ＋【类别】＋ 正文内容（自动压成一行），导出为 txt 文件；同时自动存档一份到数据目录的「导出」文件夹，年底复盘直接用。</p>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
