@@ -79,7 +79,7 @@ aside {
 }
 
 /* 资料区 */
-.files { border-top: 1px solid var(--border); background: #fff; max-height: 55vh; min-height: 240px; display: flex; flex-direction: column; }
+.files { border-top: 1px solid var(--border); background: #fff; height: 50vh; min-height: 260px; display: flex; flex-direction: column; }
 .files.dragover { outline: 2px dashed var(--primary); outline-offset: -2px; background: #f0f6ff; }
 .files-head { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px dashed var(--border); font-size: 14px; }
 #fileList { list-style: none; overflow-y: auto; padding: 4px 0; margin: 0; }
