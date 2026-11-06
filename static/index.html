@@ -64,7 +64,15 @@
           <label class="tags-label">标签 <input id="tags" placeholder="逗号分隔，如：周报,主站"></label>
         </div>
       </div>
-      <textarea id="content" placeholder="工作内容…"></textarea>
+      <div id="entryList" class="entry-list hidden"></div>
+      <textarea id="content" placeholder="工作内容…（旧格式可直接编辑，用下方追加后转为按时间记录）"></textarea>
+      <div class="entry-add">
+        <textarea id="newEntry" placeholder="填写本次工作更新，点「追加更新」自动盖上时间戳（Ctrl+Enter 快捷追加）"></textarea>
+        <div class="entry-add-btns">
+          <button id="btnAddEntry" class="primary">追加更新</button>
+          <span class="muted small">追加后任务日期自动变为今天，周导出只带出本周追加的内容</span>
+        </div>
+      </div>
       <div class="editor-actions">
         <button id="btnSave" class="primary">保存 (Ctrl+S)</button>
         <button id="btnDelete" class="danger">删除</button>
@@ -76,10 +84,12 @@
           <strong>📁 资料收集</strong>
           <span class="muted small">可直接拖拽文件到此处</span>
           <span class="spacer"></span>
+          <button id="btnNewFolder">新建文件夹</button>
           <button id="btnUpload">上传文件</button>
           <button id="btnOpenFolder">打开资料文件夹</button>
           <input id="fileInput" type="file" multiple hidden>
         </div>
+        <div id="fileCrumb" class="file-crumb hidden"></div>
         <ul id="fileList"></ul>
       </div>
     </div>
@@ -117,7 +127,7 @@
       <button id="btnExpYear">导出</button>
     </div>
     <label class="exp-dedup"><input type="checkbox" id="expDedup"> 同一任务只记一行（按标题去重）</label>
-    <p class="muted small" style="margin-top:8px">每行 = 日期 ＋ 标题 ＋【类别】＋ 正文内容（自动压成一行），导出为 txt 文件；同时自动存档一份到数据目录的「导出」文件夹，年底复盘直接用。</p>
+    <p class="muted small" style="margin-top:8px">每行 = 日期 ＋ 标题 ＋【类别】＋ 该时间段内追加的更新（带时间戳，压成一行）；该周期没有新进展的任务不会出现。同时自动存档一份到数据目录的「导出」文件夹。</p>
   </div>
 </div>
 <div id="toast" class="toast hidden"></div>

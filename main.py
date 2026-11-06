@@ -107,7 +107,8 @@ def db_init():
     """)
     # 旧数据库补充新字段（已存在则跳过）
     for stmt in ("ALTER TABLE records ADD COLUMN done INTEGER DEFAULT 0",
-                 "ALTER TABLE records ADD COLUMN deadline TEXT DEFAULT ''"):
+                 "ALTER TABLE records ADD COLUMN deadline TEXT DEFAULT ''",
+                 "ALTER TABLE records ADD COLUMN entries TEXT DEFAULT ''"):
         try:
             conn.execute(stmt)
         except sqlite3.OperationalError:
@@ -158,7 +159,40 @@ def write_record_md(rid):
     head = ("# %s\n\n- 日期：%s\n- 类别：%s\n- 标签：%s\n- 状态：%s\n- 截止：%s\n\n---\n\n"
             % (r["title"], r["date"], r["category"], r["tags"], status,
                r["deadline"] or "无"))
-    p.write_text(head + (r["content"] or ""), encoding="utf-8")
+    try:
+        entries = json.loads(r.get("entries") or "[]")
+    except Exception:
+        entries = []
+    if entries:
+        body = "\n".join("- [%s] %s" % (e["time"], e["text"]) for e in entries)
+    else:
+        body = r["content"] or ""
+    p.write_text(head + body, encoding="utf-8")
+
+
+def safe_subfolder(sub):
+    """把传入的相对子目录清洗为安全的相对路径；含 .. 返回 None"""
+    sub = str(sub or "").replace("\\", "/").strip("/")
+    if not sub:
+        return ""
+    parts = [p for p in sub.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        return None
+    return "/".join(parts)
+
+
+def iter_material_files(md):
+    """遍历记录文件夹内所有资料文件（含子目录），产出相对路径；跳过 record.md 和隐藏文件。"""
+    for root, dirs, files in os.walk(md):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for name in sorted(files):
+            if name.startswith("."):
+                continue
+            p = Path(root) / name
+            rel = p.relative_to(md).as_posix()
+            if rel == "record.md":
+                continue
+            yield rel
 
 
 def index_files(rid):
@@ -168,10 +202,9 @@ def index_files(rid):
         if r:
             md = material_dir(r["folder"])
             if md.exists():
-                for f in sorted(md.iterdir()):
-                    if is_material(f):
-                        DB.execute("INSERT INTO files(record_id,filename) VALUES(?,?)",
-                                   (rid, f.name))
+                for rel in iter_material_files(md):
+                    DB.execute("INSERT INTO files(record_id,filename) VALUES(?,?)",
+                               (rid, rel))
         DB.commit()
 
 
@@ -182,10 +215,9 @@ def reindex_all():
         for r in rows:
             md = material_dir(r["folder"])
             if md.exists():
-                for f in sorted(md.iterdir()):
-                    if is_material(f):
-                        DB.execute("INSERT INTO files(record_id,filename) VALUES(?,?)",
-                                   (r["id"], f.name))
+                for rel in iter_material_files(md):
+                    DB.execute("INSERT INTO files(record_id,filename) VALUES(?,?)",
+                               (r["id"], rel))
         DB.commit()
 
 
@@ -222,13 +254,20 @@ def create_record(title, date, category, tags, content, done=0, deadline=""):
     folder = unique_folder(year_dir, "%s %s" % (date, safe_name(title)))
     folder.mkdir()
     rel = folder.relative_to(DATA_DIR).as_posix()
-    now = datetime.now().isoformat(timespec="seconds")
+    now_dt = datetime.now()
+    now = now_dt.isoformat(timespec="seconds")
+    entries = []
+    if content:
+        # 初始内容的时间戳用记录日期（补记过去的工作也能落到正确的周）
+        entries = [{"time": "%s %s" % (date, now_dt.strftime("%H:%M")),
+                    "text": content}]
     with DB_LOCK:
         cur = DB.execute(
-            "INSERT INTO records(title,date,category,tags,content,folder,created,updated,done,deadline)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO records(title,date,category,tags,content,folder,created,updated,done,deadline,entries)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (title, date, category or "", tags or "", content or "", rel, now, now,
-             1 if done else 0, deadline or ""))
+             1 if done else 0, deadline or "",
+             json.dumps(entries, ensure_ascii=False)))
         DB.commit()
         rid = cur.lastrowid
     write_record_md(rid)
@@ -242,6 +281,11 @@ def update_record(rid, title, date, category, tags, content, done=0, deadline=""
         return False
     title = (title or "").strip() or r["title"]
     date = date or r["date"]
+    if r["entries"]:
+        # 已有时间戳条目时，正文只能通过「追加更新」维护，保持与条目一致
+        content = r["content"]
+    else:
+        content = content or ""
     old_folder = DATA_DIR / r["folder"]
     new_rel = r["folder"]
     desired = "%s/%s %s" % (date[:4], date, safe_name(title))
@@ -261,6 +305,48 @@ def update_record(rid, title, date, category, tags, content, done=0, deadline=""
             " WHERE id=?",
             (title, date, category or "", tags or "", content or "", new_rel, now,
              1 if done else 0, deadline or "", rid))
+        DB.commit()
+    write_record_md(rid)
+    index_files(rid)
+    return True
+
+
+def append_entry(rid, text, legacy=""):
+    """追加一条带时间戳的更新；首次追加时把旧正文转为第一条。任务日期自动变为今天。"""
+    r = get_record(rid)
+    if not r or not (text or "").strip():
+        return False
+    try:
+        entries = json.loads(r["entries"] or "[]")
+    except Exception:
+        entries = []
+    if not entries and (legacy or "").strip():
+        base = (r["updated"] or "")[:16] or datetime.now().strftime("%Y-%m-%d %H:%M")
+        entries.append({"time": base, "text": legacy.strip()})
+    now_dt = datetime.now()
+    entries.append({"time": now_dt.strftime("%Y-%m-%d %H:%M"), "text": text.strip()})
+    content = "\n".join(e["text"] for e in entries)
+    now_iso = now_dt.isoformat(timespec="seconds")
+    today = now_dt.strftime("%Y-%m-%d")
+    # 文件夹名跟随新日期
+    old_folder = DATA_DIR / r["folder"]
+    new_rel = r["folder"]
+    desired = "%s/%s %s" % (today[:4], today, safe_name(r["title"]))
+    if r["folder"] != desired:
+        year_dir = DATA_DIR / today[:4]
+        year_dir.mkdir(parents=True, exist_ok=True)
+        target = unique_folder(year_dir, "%s %s" % (today, safe_name(r["title"])))
+        if old_folder.exists():
+            old_folder.rename(target)
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+        new_rel = target.relative_to(DATA_DIR).as_posix()
+    with DB_LOCK:
+        DB.execute(
+            "UPDATE records SET entries=?, content=?, updated=?, date=?, folder=?"
+            " WHERE id=?",
+            (json.dumps(entries, ensure_ascii=False), content, now_iso, today,
+             new_rel, rid))
         DB.commit()
     write_record_md(rid)
     index_files(rid)
@@ -337,21 +423,57 @@ def get_reminders():
     return {"overdue": overdue, "soon": soon}
 
 
-def list_files(rid):
+def list_files(rid, sub=""):
+    """列出记录文件夹（或其中某个子目录）下的文件夹和文件。"""
+    out = {"files": [], "folders": []}
     r = get_record(rid)
-    out = []
-    if r:
-        md = material_dir(r["folder"])
-        if md.exists():
-            for f in sorted(md.iterdir(), key=lambda x: x.name):
-                if is_material(f):
-                    st = f.stat()
-                    out.append({
-                        "name": f.name,
-                        "size": st.st_size,
-                        "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    })
+    if not r:
+        return out
+    base = material_dir(r["folder"])
+    if sub:
+        s = safe_subfolder(sub)
+        if s is None:
+            return out
+        base = base / s
+    if not base.is_dir():
+        return out
+    for f in sorted(base.iterdir(), key=lambda x: (not x.is_dir(), x.name)):
+        if f.name.startswith("."):
+            continue
+        if f.is_dir():
+            out["folders"].append({"name": f.name})
+        elif f.is_file():
+            if not sub and f.name == "record.md":
+                continue
+            st = f.stat()
+            out["files"].append({
+                "name": f.name,
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
     return out
+
+
+def open_material(rid, rel):
+    """用系统默认程序打开某个资料文件（浏览器和服务在同一台机器上）。"""
+    r = get_record(rid)
+    if not r:
+        return {"ok": False, "msg": "记录不存在"}
+    root = material_dir(r["folder"]).resolve()
+    rel = safe_subfolder(rel)
+    if rel is None:
+        return {"ok": False, "msg": "非法路径"}
+    p = (root / rel).resolve()
+    if not str(p).startswith(str(root)) or not p.is_file():
+        return {"ok": False, "msg": "文件不存在"}
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
 
 
 def open_folder(rid=None):
@@ -412,17 +534,35 @@ def build_export(scope, start, end, year, dedup):
         end = "%s-12-31" % year
     with DB_LOCK:
         rows = [dict(x) for x in DB.execute(
-            "SELECT date,title,category,content FROM records WHERE date>=? AND date<=?"
+            "SELECT date,title,category,content,entries FROM records"
+            " WHERE date>=? AND date<=?"
             " ORDER BY date ASC, id ASC", (start, end)).fetchall()]
     seen = set()
     items = []
     for r in rows:
+        cat = ("【%s】" % r["category"]) if r["category"] else ""
+        try:
+            entries = json.loads(r["entries"] or "[]")
+        except Exception:
+            entries = []
+        if entries:
+            # 只导出该时间段内追加的更新；该周期没有新进展的任务整体不出现
+            picked = [e for e in entries
+                      if start <= (e.get("time") or "")[:10] <= end]
+            if not picked:
+                continue
+            parts = []
+            for e in picked:
+                t = re.sub(r"\s+", " ", e.get("text") or "").strip()
+                if t:
+                    parts.append("[%s] %s" % ((e.get("time") or "")[5:16], t))
+            body = "；".join(parts)
+        else:
+            body = re.sub(r"\s+", " ", r["content"] or "").strip()
         if dedup:
             if r["title"] in seen:
                 continue
             seen.add(r["title"])
-        cat = ("【%s】" % r["category"]) if r["category"] else ""
-        body = re.sub(r"\s+", " ", r["content"] or "").strip()
         line = "%s  %s%s" % (r["date"][5:], r["title"], cat)
         if body:
             line += " ｜ " + body
@@ -577,12 +717,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         m = re.fullmatch(r"/api/records/(\d+)", path)
         if m:
-            return self._send_json({"record": get_record(int(m.group(1)))})
+            rec = get_record(int(m.group(1)))
+            if rec:
+                try:
+                    rec["entries"] = json.loads(rec.get("entries") or "[]")
+                except Exception:
+                    rec["entries"] = []
+            return self._send_json({"record": rec})
         m = re.fullmatch(r"/api/records/(\d+)/files", path)
         if m:
             rid = int(m.group(1))
             index_files(rid)
-            return self._send_json({"files": list_files(rid)})
+            return self._send_json(list_files(rid, q.get("sub", [""])[0]))
         m = re.fullmatch(r"/api/records/(\d+)/files/(.+)", path)
         if m:
             return self.serve_material(int(m.group(1)), m.group(2))
@@ -593,7 +739,10 @@ class Handler(BaseHTTPRequestHandler):
         if not r:
             return self._send_json({"error": "记录不存在"}, 404)
         root = material_dir(r["folder"]).resolve()
-        p = (root / os.path.basename(name)).resolve()
+        rel = safe_subfolder(urllib.parse.unquote(name))
+        if rel is None:
+            return self._send_json({"error": "forbidden"}, 403)
+        p = (root / rel).resolve()
         if not str(p).startswith(str(root)):
             return self._send_json({"error": "forbidden"}, 403)
         self._send_file(p)
@@ -614,7 +763,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"error": "记录不存在"}, 404)
             raw_name = urllib.parse.unquote(self.headers.get("X-Filename", "file"))
             fname = safe_name(os.path.basename(raw_name), limit=120)
+            sub = safe_subfolder(
+                urllib.parse.unquote(self.headers.get("X-Subfolder", "")))
+            if sub is None:
+                return self._send_json({"error": "非法路径"}, 400)
             md = material_dir(r["folder"])
+            if sub:
+                md = md / sub
             md.mkdir(parents=True, exist_ok=True)
             target = md / fname
             if target.exists():
@@ -636,6 +791,30 @@ class Handler(BaseHTTPRequestHandler):
                     remaining -= len(chunk)
             index_files(rid)
             return self._send_json({"ok": True, "name": target.name})
+        m = re.fullmatch(r"/api/records/(\d+)/entries", path)
+        if m:
+            d = self._read_json()
+            ok = append_entry(int(m.group(1)), d.get("text", ""), d.get("legacy", ""))
+            return self._send_json({"ok": ok})
+        m = re.fullmatch(r"/api/records/(\d+)/mkdir", path)
+        if m:
+            d = self._read_json()
+            r = get_record(int(m.group(1)))
+            if not r:
+                return self._send_json({"error": "记录不存在"}, 404)
+            sub = safe_subfolder(d.get("sub", ""))
+            name = safe_name(d.get("name", ""), limit=60)
+            if sub is None or not name:
+                return self._send_json({"error": "非法名称"}, 400)
+            base = material_dir(r["folder"])
+            target = base / sub / name if sub else base / name
+            target.mkdir(parents=True, exist_ok=True)
+            index_files(int(m.group(1)))
+            return self._send_json({"ok": True})
+        m = re.fullmatch(r"/api/records/(\d+)/open_file", path)
+        if m:
+            d = self._read_json()
+            return self._send_json(open_material(int(m.group(1)), d.get("path", "")))
         m = re.fullmatch(r"/api/records/(\d+)/open_folder", path)
         if m:
             return self._send_json(open_folder(int(m.group(1))))
@@ -673,9 +852,17 @@ class Handler(BaseHTTPRequestHandler):
             r = get_record(rid)
             if not r:
                 return self._send_json({"error": "记录不存在"}, 404)
-            p = material_dir(r["folder"]) / os.path.basename(m.group(2))
-            if p.exists() and p.is_file():
+            root = material_dir(r["folder"]).resolve()
+            rel = safe_subfolder(m.group(2))
+            if rel is None:
+                return self._send_json({"error": "forbidden"}, 403)
+            p = (root / rel).resolve()
+            if not str(p).startswith(str(root)):
+                return self._send_json({"error": "forbidden"}, 403)
+            if p.is_file():
                 p.unlink()
+            elif p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
             index_files(rid)
             return self._send_json({"ok": True})
         self._send_json({"error": "not found"}, 404)

@@ -88,6 +88,8 @@ aside {
 }
 #fileList li:hover { background: var(--bg); }
 #fileList a { color: var(--primary); text-decoration: none; max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fileList a.file-open { cursor: pointer; }
+#fileList a.preview { font-size: 12px; color: var(--muted); }
 #fileList a:hover { text-decoration: underline; }
 
 .empty {
@@ -165,6 +167,22 @@ button.link.danger { color: var(--danger); }
 .item-title.done { text-decoration: line-through; color: var(--muted); }
 .dl-badge { color: #b26a00; }
 .dl-overdue { color: var(--danger); font-weight: 600; }
+
+/* 追加更新（带时间戳） */
+.entry-list { flex: 1; overflow-y: auto; padding: 12px 16px; background: #fff; }
+.entry { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px dashed #ececec; font-size: 14px; line-height: 1.6; }
+.entry-time { flex-shrink: 0; color: var(--muted); font-size: 12px; padding-top: 2px; white-space: nowrap; }
+.entry-text { white-space: pre-wrap; word-break: break-word; }
+.entry-add { border-top: 1px solid var(--border); background: var(--bg); padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
+.entry-add textarea { height: 64px; resize: vertical; }
+.entry-add-btns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* 资料子文件夹 */
+.file-crumb { display: flex; align-items: center; gap: 4px; padding: 6px 16px; font-size: 12px; background: #fafafa; border-bottom: 1px dashed var(--border); }
+.file-crumb a { color: var(--primary); cursor: pointer; text-decoration: none; }
+.file-crumb a:hover { text-decoration: underline; }
+.file-crumb .sep { color: var(--muted); }
+#fileList .folder-row a { color: #8a6d00; font-weight: 600; }
 
 /* 列表项删除按钮（悬停显示） */
 .item { position: relative; }

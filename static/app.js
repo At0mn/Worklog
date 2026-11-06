@@ -1,7 +1,7 @@
 /* 工作记录 - 前端逻辑（原生 JS，无外部依赖，可离线运行） */
 let state = {
   records: [], currentId: null, dirty: false, config: null,
-  view: 'calendar', calYear: 0, calMonth: 0
+  view: 'calendar', calYear: 0, calMonth: 0, entries: []
 };
 
 const $ = id => document.getElementById(id);
@@ -114,7 +114,16 @@ function bindEvents() {
   $('btnNew').addEventListener('click', newRecord);
   $('btnSave').addEventListener('click', save);
   $('btnDelete').addEventListener('click', deleteRecord);
+  $('btnAddEntry').addEventListener('click', appendEntry);
+  $('newEntry').addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); appendEntry(); }
+  });
   $('btnUpload').addEventListener('click', () => $('fileInput').click());
+  $('btnNewFolder').addEventListener('click', mkdirFolder);
+  $('fileCrumb').addEventListener('click', e => {
+    const a = e.target.closest('a');
+    if (a) { state.fileSub = a.dataset.target || ''; loadFiles(); }
+  });
   $('fileInput').addEventListener('change', e => { uploadFiles(e.target.files); e.target.value = ''; });
   $('btnOpenFolder').addEventListener('click', () => openFolder(state.currentId));
   $('btnCat').addEventListener('click', openCatModal);
@@ -137,8 +146,12 @@ function bindEvents() {
     }
   });
   $('fileList').addEventListener('click', e => {
+    const fo = e.target.closest('.file-open');
+    if (fo) { e.preventDefault(); openFileBySystem(fo.dataset.path); return; }
+    const fl = e.target.closest('.folder-link');
+    if (fl) { navigateFolder(fl.dataset.name); return; }
     const btn = e.target.closest('button.del');
-    if (btn) delFile(btn.dataset.name);
+    if (btn) delFile(btn.dataset.name, btn.dataset.kind);
   });
   $('btnExport').addEventListener('click', openExportModal);
   $('btnExpClose').addEventListener('click', closeExportModal);
@@ -326,6 +339,18 @@ function renderList() {
 }
 
 /* ---------- 编辑 ---------- */
+function renderEntries() {
+  const has = state.entries.length > 0;
+  $('entryList').classList.toggle('hidden', !has);
+  $('content').classList.toggle('hidden', has);
+  if (!has) { $('entryList').innerHTML = ''; return; }
+  $('entryList').innerHTML = state.entries.map(e =>
+    `<div class="entry"><span class="entry-time">${esc(e.time)}</span>` +
+    `<span class="entry-text">${esc(e.text).replace(/\n/g, '<br>')}</span></div>`
+  ).join('');
+  $('content').value = '';
+}
+
 async function selectRecord(id) {
   if (state.dirty && state.currentId === id) { showView('list'); return; }
   if (!await confirmDiscard()) return;
@@ -340,6 +365,9 @@ async function selectRecord(id) {
   $('category').value = d.record.category || '';
   $('tags').value = d.record.tags || '';
   $('content').value = d.record.content || '';
+  state.entries = d.record.entries || [];
+  state.fileSub = '';
+  renderEntries();
   $('savedAt').textContent = d.record.updated ? '最近更新 ' + d.record.updated : '';
   $('editor').classList.remove('hidden');
   $('empty').classList.add('hidden');
@@ -381,7 +409,7 @@ async function save() {
       done: $('done').checked ? 1 : 0,
       deadline: $('deadline').value,
       category: $('category').value, tags: $('tags').value,
-      content: $('content').value
+      content: state.entries.length ? undefined : $('content').value
     })
   });
   if (d.ok) {
@@ -424,22 +452,76 @@ async function deleteRecord() {
   toast('已删除');
 }
 
+async function appendEntry() {
+  if (!state.currentId) { toast('请先选择一条记录'); return; }
+  const text = $('newEntry').value.trim();
+  if (!text) { toast('先填写本次更新内容'); return; }
+  if (state.dirty) { toast('请先保存上方的修改（Ctrl+S）再追加'); return; }
+  const legacy = state.entries.length === 0 ? $('content').value.trim() : '';
+  const d = await api('/api/records/' + state.currentId + '/entries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, legacy })
+  });
+  if (d.ok) {
+    $('newEntry').value = '';
+    toast('已追加，任务日期已更新为今天');
+    state.dirty = false;
+    await selectRecord(state.currentId);
+    await loadRecords();
+    renderCalendar();
+    checkReminders();
+  }
+}
+
 /* ---------- 资料文件 ---------- */
+function encFilePath(name) {
+  const segs = state.fileSub ? state.fileSub.split('/') : [];
+  segs.push(name);
+  return segs.map(encodeURIComponent).join('/');
+}
+
+function renderBreadcrumb() {
+  const box = $('fileCrumb');
+  if (!state.fileSub) { box.classList.add('hidden'); return; }
+  const parts = state.fileSub.split('/');
+  let html = `<a data-target="">📁 根目录</a>`;
+  let acc = [];
+  for (const p of parts) {
+    acc.push(p);
+    html += `<span class="sep">/</span><a data-target="${esc(acc.join('/'))}">${esc(p)}</a>`;
+  }
+  box.innerHTML = html;
+  box.classList.remove('hidden');
+}
+
 async function loadFiles() {
   if (!state.currentId) return;
-  const d = await api('/api/records/' + state.currentId + '/files');
+  const d = await api('/api/records/' + state.currentId + '/files?sub=' + encodeURIComponent(state.fileSub));
+  renderBreadcrumb();
   const box = $('fileList');
-  if (!d.files.length) {
-    box.innerHTML = '<li class="muted" style="padding:8px 16px">暂无资料 —— 点「上传文件」，或直接把文件拖到本区域</li>';
-    return;
+  const rows = [];
+  for (const f of d.folders || []) {
+    rows.push(`<li class="folder-row">
+       <a class="folder-link" data-name="${esc(f.name)}" title="打开文件夹">📁 ${esc(f.name)}</a>
+       <span class="spacer"></span>
+       <button class="link danger del" data-name="${esc(f.name)}" data-kind="folder">删除</button>
+     </li>`);
   }
-  box.innerHTML = d.files.map(f =>
-    `<li>
-       <a href="/api/records/${state.currentId}/files/${encodeURIComponent(f.name)}" target="_blank" title="${esc(f.name)}">${esc(f.name)}</a>
+  for (const f of d.files || []) {
+    rows.push(`<li>
+       <a class="file-open" data-path="${encFilePath(f.name)}" title="用系统默认程序打开">${esc(f.name)}</a>
        <span class="muted">${fmtSize(f.size)} · ${f.mtime}</span>
        <span class="spacer"></span>
-       <button class="link danger del" data-name="${esc(f.name)}">删除</button>
-     </li>`).join('');
+       <a class="link preview" href="/api/records/${state.currentId}/files/${encFilePath(f.name)}" target="_blank">预览</a>
+       <button class="link danger del" data-name="${esc(f.name)}" data-kind="file">删除</button>
+     </li>`);
+  }
+  if (!rows.length) {
+    box.innerHTML = '<li class="muted" style="padding:8px 16px">暂无资料 —— 点「上传文件」「新建文件夹」，或直接把文件拖到本区域</li>';
+    return;
+  }
+  box.innerHTML = rows.join('');
 }
 
 async function uploadFiles(fileList) {
@@ -449,7 +531,10 @@ async function uploadFiles(fileList) {
     const buf = await f.arrayBuffer();
     await api('/api/records/' + state.currentId + '/files', {
       method: 'POST',
-      headers: { 'X-Filename': encodeURIComponent(f.name) },
+      headers: {
+        'X-Filename': encodeURIComponent(f.name),
+        'X-Subfolder': encodeURIComponent(state.fileSub)
+      },
       body: buf
     });
   }
@@ -458,16 +543,48 @@ async function uploadFiles(fileList) {
   loadRecords();
 }
 
-async function delFile(name) {
-  if (!confirm('删除文件「' + name + '」？')) return;
-  await api('/api/records/' + state.currentId + '/files/' + encodeURIComponent(name), { method: 'DELETE' });
+async function delFile(name, kind) {
+  const tip = kind === 'folder'
+    ? '删除文件夹「' + name + '」及其里面的所有内容？'
+    : '删除文件「' + name + '」？';
+  if (!confirm(tip)) return;
+  await api('/api/records/' + state.currentId + '/files/' + encFilePath(name), { method: 'DELETE' });
   loadFiles();
   loadRecords();
+}
+
+async function mkdirFolder() {
+  if (!state.currentId) { toast('请先选择一条记录'); return; }
+  const name = prompt('新文件夹名称：');
+  if (name === null) return;
+  if (!name.trim()) { toast('名称不能为空'); return; }
+  const d = await api('/api/records/' + state.currentId + '/mkdir', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), sub: state.fileSub })
+  });
+  if (d.ok) { toast('已创建'); loadFiles(); }
+  else toast(d.error || '创建失败');
+}
+
+function navigateFolder(name) {
+  state.fileSub = state.fileSub ? state.fileSub + '/' + name : name;
+  loadFiles();
 }
 
 async function openFolder(id) {
   const d = await api('/api/records/' + id + '/open_folder', { method: 'POST' });
   if (!d.ok) toast('未能自动打开，请手动访问：' + state.config.data_dir);
+}
+
+async function openFileBySystem(path) {
+  if (!state.currentId) return;
+  const d = await api('/api/records/' + state.currentId + '/open_file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path })
+  });
+  if (!d.ok) toast('未能自动打开：' + (d.msg || '请用「预览」或打开资料文件夹'));
 }
 
 /* ---------- 类别管理 ---------- */

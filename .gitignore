@@ -1,0 +1,13 @@
+# 个人配置（含本机数据目录路径，不上传）
+config.json
+
+# 测试/临时数据
+测试数据/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 系统文件
+.DS_Store
+Thumbs.db
