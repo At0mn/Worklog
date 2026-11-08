@@ -353,6 +353,34 @@ def append_entry(rid, text, legacy=""):
     return True
 
 
+def delete_entry(rid, index):
+    """删除某条更新（按序号）。"""
+    r = get_record(rid)
+    if not r:
+        return False
+    try:
+        entries = json.loads(r["entries"] or "[]")
+    except Exception:
+        entries = []
+    try:
+        index = int(index)
+    except Exception:
+        return False
+    if index < 0 or index >= len(entries):
+        return False
+    entries.pop(index)
+    content = "\n".join(e["text"] for e in entries)
+    now = datetime.now().isoformat(timespec="seconds")
+    with DB_LOCK:
+        DB.execute(
+            "UPDATE records SET entries=?, content=?, updated=? WHERE id=?",
+            (json.dumps(entries, ensure_ascii=False), content, now, rid))
+        DB.commit()
+    write_record_md(rid)
+    index_files(rid)
+    return True
+
+
 def delete_record(rid, delete_files):
     r = get_record(rid)
     if not r:
@@ -846,6 +874,9 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             delete_files = q.get("delete_files", ["0"])[0] == "1"
             return self._send_json({"ok": delete_record(int(m.group(1)), delete_files)})
+        m = re.fullmatch(r"/api/records/(\d+)/entries/(\d+)", path)
+        if m:
+            return self._send_json({"ok": delete_entry(int(m.group(1)), m.group(2))})
         m = re.fullmatch(r"/api/records/(\d+)/files/(.+)", path)
         if m:
             rid = int(m.group(1))

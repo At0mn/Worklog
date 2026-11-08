@@ -115,6 +115,15 @@ function bindEvents() {
   $('btnSave').addEventListener('click', save);
   $('btnDelete').addEventListener('click', deleteRecord);
   $('btnAddEntry').addEventListener('click', appendEntry);
+  $('entryList').addEventListener('click', async e => {
+    const btn = e.target.closest('button.del-entry');
+    if (!btn) return;
+    if (!confirm('删除这条更新？（不可恢复）')) return;
+    await api('/api/records/' + state.currentId + '/entries/' + btn.dataset.idx, { method: 'DELETE' });
+    state.dirty = false;
+    await selectRecord(state.currentId);
+    loadRecords();
+  });
   $('newEntry').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); appendEntry(); }
   });
@@ -344,9 +353,10 @@ function renderEntries() {
   $('entryList').classList.toggle('hidden', !has);
   $('content').classList.toggle('hidden', has);
   if (!has) { $('entryList').innerHTML = ''; return; }
-  $('entryList').innerHTML = state.entries.map(e =>
+  $('entryList').innerHTML = state.entries.map((e, i) =>
     `<div class="entry"><span class="entry-time">${esc(e.time)}</span>` +
-    `<span class="entry-text">${esc(e.text).replace(/\n/g, '<br>')}</span></div>`
+    `<span class="entry-text">${esc(e.text).replace(/\n/g, '<br>')}</span>` +
+    `<button class="link danger del-entry" data-idx="${i}" title="删除这条更新">删除</button></div>`
   ).join('');
   $('content').value = '';
 }
