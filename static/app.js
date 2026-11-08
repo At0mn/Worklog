@@ -113,7 +113,6 @@ function bindEvents() {
   });
   $('btnNew').addEventListener('click', newRecord);
   $('btnSave').addEventListener('click', save);
-  $('btnDelete').addEventListener('click', deleteRecord);
   $('btnAddEntry').addEventListener('click', appendEntry);
   $('entryList').addEventListener('click', async e => {
     const btn = e.target.closest('button.del-entry');
