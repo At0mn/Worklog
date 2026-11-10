@@ -11,9 +11,18 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "正在启动 工作记录 ...（关闭本窗口即退出程序）"
+echo "正在启动 工作记录 ..."
+echo "（重复双击只会打开页面，不会重复启动；关闭窗口程序可能继续运行）"
 sleep 1
 python3 main.py
+code=$?
+
+if [ "$code" = "2" ]; then
+  # 程序已在运行，本次只是打开了页面，直接关闭窗口
+  sleep 2
+  exit 0
+fi
 
 echo ""
-read -r -p "程序已退出，按回车关闭窗口..."
+echo "程序已退出。若需停止后台进程，可在终端执行: pkill -f main.py"
+read -r -p "按回车关闭窗口..."

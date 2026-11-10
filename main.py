@@ -5,6 +5,7 @@
 仅需 python3 标准库（麒麟 V10 / Linux / macOS 均可运行），无需联网安装任何东西。
 用法: python3 main.py   然后在浏览器中访问终端里显示的地址。
 """
+import http.client
 import json
 import mimetypes
 import os
@@ -912,7 +913,34 @@ def pick_port(preferred):
         return port
 
 
+def probe_existing():
+    """探测本程序是否已在运行（防止重复启动占新端口）。"""
+    port = int(CFG.get("port") or 8765)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1.5)
+        conn.request("GET", "/api/config")
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", "ignore")
+        conn.close()
+        if resp.status == 200 and '"data_dir"' in body:
+            return port
+    except Exception:
+        pass
+    return None
+
+
 def main():
+    existing = probe_existing()
+    if existing:
+        url = "http://127.0.0.1:%d" % existing
+        print("=" * 50)
+        print("  检测到 工作记录 已在运行：%s" % url)
+        print("  直接打开页面，未启动新实例。")
+        print("  停止程序：在终端执行  pkill -f main.py")
+        print("=" * 50)
+        if not os.environ.get("GONGZUOJILU_NO_BROWSER"):
+            webbrowser.open(url)
+        sys.exit(2)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     migrate_folders()
     reindex_all()
@@ -924,7 +952,8 @@ def main():
     print("  %s 已启动" % APP_NAME)
     print("  数据目录: %s" % DATA_DIR)
     print("  浏览器访问: %s" % url)
-    print("  停止: 在本终端按 Ctrl+C")
+    print("  停止: 在本终端按 Ctrl+C；或执行 pkill -f main.py")
+    print("  提示: 重复双击启动脚本只会打开本页面，不会重复启动")
     print("=" * 50)
     if not os.environ.get("GONGZUOJILU_NO_BROWSER"):
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
