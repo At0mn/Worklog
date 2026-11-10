@@ -112,7 +112,7 @@ function bindEvents() {
     if (item) selectRecord(Number(item.dataset.id));
   });
   $('btnNew').addEventListener('click', newRecord);
-  $('btnSave').addEventListener('click', save);
+  $('btnSave').addEventListener('click', () => save(false));
   $('btnAddEntry').addEventListener('click', appendEntry);
   $('entryList').addEventListener('click', async e => {
     const btn = e.target.closest('button.del-entry');
@@ -143,10 +143,10 @@ function bindEvents() {
     const btn = e.target.closest('button.del');
     if (btn) removeCat(btn.dataset.name);
   });
-  ['title', 'date', 'category', 'tags', 'content'].forEach(id =>
-    $(id).addEventListener('input', () => { state.dirty = true; }));
-  ['done', 'deadline'].forEach(id =>
-    $(id).addEventListener('change', () => { state.dirty = true; }));
+  ['title', 'tags', 'content'].forEach(id =>
+    $(id).addEventListener('input', () => scheduleAutosave(1000)));
+  ['date', 'category', 'done', 'deadline'].forEach(id =>
+    $(id).addEventListener('change', () => scheduleAutosave(0)));
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
@@ -391,8 +391,9 @@ function showEmpty() {
 }
 
 async function confirmDiscard() {
-  if (!state.dirty) return true;
-  return confirm('当前记录有未保存的修改，确定放弃吗？');
+  // 自动保存时代：切换前把未存上的内容补存，不再弹确认窗
+  await flushSave();
+  return true;
 }
 
 async function newRecord() {
@@ -408,27 +409,55 @@ async function newRecord() {
   $('title').focus();
 }
 
-async function save() {
+let saveTimer = null;
+
+function scheduleAutosave(delay) {
   if (!state.currentId) return;
-  const d = await api('/api/records/' + state.currentId, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: $('title').value, date: $('date').value,
-      done: $('done').checked ? 1 : 0,
-      deadline: $('deadline').value,
-      category: $('category').value, tags: $('tags').value,
-      content: state.entries.length ? undefined : $('content').value
-    })
-  });
+  state.dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => save(true), delay);
+}
+
+async function flushSave() {
+  clearTimeout(saveTimer);
+  if (state.dirty && state.currentId) await save(true);
+}
+
+async function save(auto = false) {
+  if (!state.currentId) return;
+  clearTimeout(saveTimer);
+  const setFail = msg => {
+    $('savedAt').textContent = msg;
+    $('savedAt').style.color = 'var(--danger)';
+    setTimeout(() => { $('savedAt').style.color = ''; }, 3000);
+  };
+  let d;
+  try {
+    d = await api('/api/records/' + state.currentId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: $('title').value, date: $('date').value,
+        done: $('done').checked ? 1 : 0,
+        deadline: $('deadline').value,
+        category: $('category').value, tags: $('tags').value,
+        content: state.entries.length ? undefined : $('content').value
+      })
+    });
+  } catch (e) {
+    setFail('保存失败，请检查程序是否在运行');
+    return;
+  }
   if (d.ok) {
     state.dirty = false;
-    $('savedAt').textContent = '已保存 ' + new Date().toLocaleString();
-    toast('已保存');
+    $('savedAt').textContent = (auto ? '已自动保存 ' : '已保存 ') + new Date().toLocaleTimeString();
+    if (!auto) toast('已保存');
     await loadRecords();
     loadFiles();
     renderCalendar();
     checkReminders();
+  } else {
+    setFail('保存失败，请重试');
   }
 }
 
